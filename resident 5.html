@@ -1,0 +1,67 @@
+<!doctype html>
+<html lang="en">
+
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>Resident — GarboTrack</title>
+
+  <link rel="stylesheet" href="css/garbotrack.css" />
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.0/css/all.min.css" />
+  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+  <link rel="stylesheet" href="https://unpkg.com/leaflet-routing-machine@latest/dist/leaflet-routing-machine.css" />
+</head>
+
+<body>
+
+<header class="topbar">
+  <i class="fa-solid fa-house"></i> Resident
+  <button class="btn ghost" onclick="GARBO.logout()" style="margin-left:auto;">Logout</button>
+</header>
+
+<main class="dashboard">
+
+  <!-- Schedules -->
+  <section class="card wide">
+    <div class="row-between">
+      <h3>Schedules for Your Barangay</h3>
+      <button id="refreshSchedules" class="btn small">Refresh</button>
+    </div>
+    <ul id="scheduleList" class="list"></ul>
+  </section>
+
+  <!-- Map -->
+  <section class="card wide">
+    <h3>Live Map</h3>
+    <div id="map"></div>
+    <p class="muted">House = You • Truck = Collector</p>
+  </section>
+
+  <!-- Chat -->
+  <section class="card">
+    <h3>Chat with Collector</h3>
+    <div id="chatBox"></div>
+
+    <div style="display:flex;gap:8px;margin-top:10px;">
+      <input id="chatInput" placeholder="Message..." />
+      <button id="sendChat" class="btn primary">Send</button>
+    </div>
+  </section>
+
+  <!-- Reports -->
+  <section class="card">
+    <h3>Report an Issue</h3>
+    <textarea id="reportText" placeholder="Describe the issue..."></textarea>
+    <button id="sendReport" class="btn primary">Submit Report</button>
+  </section>
+
+</main>
+
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+<script src="https://unpkg.com/leaflet-routing-machine@latest/dist/leaflet-routing-machine.js"></script>
+
+<!-- Your JS file -->
+<script src="js/resident.js"></script>
+
+</body>
+</html>

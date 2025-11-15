@@ -1,0 +1,275 @@
+<!doctype html>
+<html lang="en">
+
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>Admin — GarboTrack</title>
+
+  <link rel="stylesheet" href="css/garbotrack.css" />
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.0/css/all.min.css" />
+  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+  
+  <style>
+    #map { height: 320px; border-radius: 8px; }
+    .stats-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+      gap: 12px;
+      margin-bottom: 16px;
+    }
+    .stat-card {
+      padding: 15px;
+      background: white;
+      border-radius: 10px;
+      box-shadow: 0 2px 6px rgba(0,0,0,0.1);
+      text-align: center;
+    }
+    .stat-number {
+      font-size: 2rem;
+      font-weight: bold;
+      margin-top: 6px;
+    }
+    .list-item { display:flex; justify-content:space-between; padding:10px 0; border-bottom:1px solid #eee; }
+    .muted { color:#666; }
+    .form-row { display:flex; gap:8px; }
+    .form-row input { flex:1; padding:6px; border:1px solid #ddd; border-radius:5px; }
+  </style>
+</head>
+
+<body>
+
+<header class="topbar">
+  <i class="fa-solid fa-cog"></i> Admin Dashboard
+  <button class="btn ghost" onclick="GARBO.logout()" style="margin-left:auto;">Logout</button>
+</header>
+
+<main class="dashboard">
+
+  <!-- DASHBOARD STATS -->
+  <section class="stats-grid">
+    <div class="stat-card">
+      <div>Total Residents</div>
+      <div id="stat_residents" class="stat-number">0</div>
+    </div>
+
+    <div class="stat-card">
+      <div>Active Collectors</div>
+      <div id="stat_collectors" class="stat-number">0</div>
+    </div>
+
+    <div class="stat-card">
+      <div>Schedules Today</div>
+      <div id="stat_today" class="stat-number">0</div>
+    </div>
+
+    <div class="stat-card">
+      <div>Pending Reports</div>
+      <div id="stat_reports" class="stat-number">0</div>
+    </div>
+  </section>
+
+  <!-- SCHEDULES -->
+  <section class="card wide">
+    <div class="row-between">
+      <h3>Manage Schedules</h3>
+      <button id="refreshAll" class="btn small">Refresh</button>
+    </div>
+
+    <form id="createScheduleForm" class="form-row" style="margin:12px 0;">
+      <input id="sched_barangay" placeholder="Barangay" required />
+      <input type="date" id="sched_date" required />
+      <input type="time" id="sched_time" />
+      <input id="sched_notes" placeholder="Notes (optional)" />
+      <button class="btn primary">Add</button>
+    </form>
+
+    <ul id="scheduleList" class="list"></ul>
+  </section>
+
+  <!-- MAP -->
+  <section class="card wide">
+    <h3>Live Map</h3>
+    <div id="map"></div>
+    <p class="muted">Blue = Resident • Truck = Collector</p>
+  </section>
+
+  <!-- COLLECTORS -->
+  <section class="card">
+    <h3>Collectors</h3>
+    <ul id="collectorList" class="list"></ul>
+  </section>
+
+  <!-- REPORTS -->
+  <section class="card">
+    <h3>Reports</h3>
+    <ul id="reportsList" class="list"></ul>
+  </section>
+
+</main>
+
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+
+
+<script>
+/* ======================================================
+   ADMIN LOGIC — ALL IN THIS FILE
+====================================================== */
+
+(async function () {
+  await GARBO.init();
+  const sup = window._GARBO_SUPABASE;
+
+  /* AUTH CHECK */
+  let profile = localStorage.getItem("garbo_profile");
+  profile = profile ? JSON.parse(profile) : await GARBO.getCurrentProfile();
+
+  if (!profile || profile.role !== "admin") {
+    alert("Admin access required.");
+    return location.href = "index.html";
+  }
+
+  /* ============= STATISTICS ============= */
+  async function loadStats() {
+
+    // Total Residents
+    const residents = await sup.from("residents").select("id", { count: "exact" });
+    document.getElementById("stat_residents").innerText = residents.count || 0;
+
+    // Active Collectors
+    const collectors = await sup.from("collectors").select("id", { count: "exact" });
+    document.getElementById("stat_collectors").innerText = collectors.count || 0;
+
+    // Schedules Today
+    const today = new Date().toISOString().split("T")[0];
+    const sched = await sup.from("schedules")
+      .select("id", { count: "exact" })
+      .eq("date", today);
+    document.getElementById("stat_today").innerText = sched.count || 0;
+
+    // Pending Reports
+    const reports = await sup.from("reports")
+      .select("id", { count: "exact" })
+      .eq("status", "pending");
+    document.getElementById("stat_reports").innerText = reports.count || 0;
+  }
+
+  /* ============= SCHEDULE MANAGEMENT ============= */
+  async function loadSchedules() {
+    const res = await sup.from("schedules").select("*").order("date");
+    const list = document.getElementById("scheduleList");
+    list.innerHTML = "";
+
+    if (!res.data.length) {
+      list.innerHTML = "<li class='muted'>No schedules yet.</li>";
+      return;
+    }
+
+    for (const s of res.data) {
+      const li = document.createElement("li");
+      li.className = "list-item";
+
+      li.innerHTML = `
+        <div>
+          <strong>${s.barangay}</strong>
+          <div class="muted">${s.date} ${s.time || ""}</div>
+          <div class="muted">${s.notes || ""}</div>
+        </div>
+      `;
+
+      const del = document.createElement("button");
+      del.className = "btn danger small";
+      del.innerText = "Delete";
+      del.onclick = async () => {
+        await sup.from("schedules").delete().eq("id", s.id);
+        loadSchedules();
+        loadStats();
+      };
+
+      li.appendChild(del);
+      list.appendChild(li);
+    }
+  }
+
+  /* Create schedule */
+  document.getElementById("createScheduleForm").onsubmit = async (e) => {
+    e.preventDefault();
+
+    await sup.from("schedules").insert([{
+      barangay: sched_barangay.value,
+      date: sched_date.value,
+      time: sched_time.value,
+      notes: sched_notes.value
+    }]);
+
+    e.target.reset();
+    loadSchedules();
+    loadStats();
+  };
+
+  /* ============= COLLECTORS ============= */
+  async function loadCollectors() {
+    const res = await sup.from("collectors").select("*");
+    const list = document.getElementById("collectorList");
+
+    list.innerHTML = "";
+    if (!res.data.length) {
+      list.innerHTML = "<li class='muted'>No collectors.</li>";
+      return;
+    }
+
+    res.data.forEach(c => {
+      const li = document.createElement("li");
+      li.className = "list-item";
+      li.innerHTML = `<strong>${c.full_name}</strong> <span class="muted">${c.barangay}</span>`;
+      list.appendChild(li);
+    });
+  }
+
+  /* ============= REPORTS ============= */
+  async function loadReports() {
+    const res = await sup.from("reports").select("*").order("created_at", { ascending: false });
+    const list = document.getElementById("reportsList");
+    list.innerHTML = "";
+
+    if (!res.data.length) {
+      list.innerHTML = "<li class='muted'>No reports.</li>";
+      return;
+    }
+
+    res.data.forEach(r => {
+      const li = document.createElement("li");
+      li.className = "list-item";
+      li.innerHTML = `
+        <div>
+          <strong>${r.title || "Report"}</strong>
+          <div class="muted">${r.content}</div>
+        </div>
+      `;
+      list.appendChild(li);
+    });
+  }
+
+  /* ============= MAP ============= */
+  const map = L.map("map").setView([14.5995, 120.9842], 12);
+  L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png").addTo(map);
+
+  /* ============= REFRESH BUTTON ============= */
+  document.getElementById("refreshAll").onclick = () => {
+    loadStats();
+    loadSchedules();
+    loadCollectors();
+    loadReports();
+  };
+
+  /* ============= INITIAL LOAD ============= */
+  loadStats();
+  loadSchedules();
+  loadCollectors();
+  loadReports();
+
+})();
+</script>
+
+</body>
+</html>

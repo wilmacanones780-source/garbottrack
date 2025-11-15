@@ -1,0 +1,113 @@
+<!doctype html>
+
+<html lang="en">
+
+<head>
+
+<meta charset="utf-8">
+
+<meta name="viewport" content="width=device-width,initial-scale=1">
+
+<title>GarboTrack — Sign Up</title>
+
+<link rel="stylesheet" href="css/garbotrack.css">
+
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.0/css/all.min.css">
+
+</head>
+
+<body>
+
+<header class="topbar">
+
+<i class="fa-solid fa-user-plus"></i> Create Account
+
+</header>
+
+<main class="centered-card">
+
+<h2>Sign Up</h2>
+
+<form id="signupForm" class="form-grid">
+
+<label>Full Name <input id="name" required></label>
+
+<label>Email <input id="email" type="email" required></label>
+
+<label>Password <input id="password" type="password" required></label>
+
+<label>Role
+
+<select id="role">
+
+<option value="resident">Resident</option>
+
+<option value="collector">Collector</option>
+
+</select>
+
+</label>
+
+<label>Barangay (type)
+
+<input id="barangay" required placeholder="Alas / Cabitan / Poblacion">
+
+</label>
+
+<button class="btn primary" type="submit">Create Account</button>
+
+<a href="index.html" class="btn ghost" style="margin-top:6px;">Back to Login</a>
+
+</form>
+
+</main>
+
+<script src="js/main.js"></script>
+
+<script>
+
+function wait(){
+
+if(!window.GARBO) return setTimeout(wait,100);
+
+document.getElementById("signupForm").addEventListener("submit", async function(e){
+
+e.preventDefault();
+
+try{
+
+await GARBO.signup({
+
+name: document.getElementById("name").value.trim(),
+
+email: document.getElementById("email").value.trim(),
+
+password: document.getElementById("password").value,
+
+role: document.getElementById("role").value,
+
+barangay: document.getElementById("barangay").value.trim()
+
+});
+
+alert("Account created!");
+
+location.href = "index.html";
+
+}catch(err){
+
+alert("Error: " + (err.message || err));
+
+}
+
+});
+
+}
+
+wait();
+
+</script>
+
+</body>
+
+</html>

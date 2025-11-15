@@ -1,0 +1,91 @@
+<!doctype html>
+
+<html lang="en">
+
+<head>
+
+<meta charset="utf-8" />
+
+<meta name="viewport" content="width=device-width,initial-scale=1" />
+
+<title>GarboTrack — Login</title>
+
+<link rel="stylesheet" href="css/garbotrack.css" />
+
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.0/css/all.min.css" />
+
+</head>
+
+<body>
+
+<header class="topbar">
+
+<i class="fa-solid fa-recycle"></i> GarboTrack
+
+</header>
+
+<main class="centered-card">
+
+<h2>Login</h2>
+
+<form id="loginForm" class="form-grid">
+
+<label>Email <input type="email" id="email" required /></label>
+
+<label>Password <input type="password" id="password" required /></label>
+
+<button class="btn primary" type="submit">Login</button>
+
+<a href="signup.html" class="btn ghost" style="margin-top:8px;">Create an Account</a>
+
+</form>
+
+</main>
+
+<script src="js/main.js"></script>
+
+<script>
+
+function wait() {
+
+if (!window.GARBO) return setTimeout(wait, 100);
+
+document.getElementById("loginForm").addEventListener("submit", async function (e) {
+
+e.preventDefault();
+
+const email = document.getElementById("email").value.trim();
+
+const password = document.getElementById("password").value;
+
+try {
+
+const res = await GARBO.login({ email, password });
+
+const profile = res.profile;
+
+localStorage.setItem("garbo_profile", JSON.stringify(profile));
+
+if (profile.role === "resident") location.href = "resident.html";
+
+else if (profile.role === "collector") location.href = "collector.html";
+
+else location.href = "admin.html";
+
+} catch (err) {
+
+alert("Login failed: " + (err.message || err));
+
+}
+
+});
+
+}
+
+wait();
+
+</script>
+
+</body>
+
+</html>

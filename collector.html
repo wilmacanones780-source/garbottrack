@@ -1,0 +1,417 @@
+<!doctype html> <html lang="en">
+
+<head> <meta charset="utf-8" /> <meta name="viewport" content="width=device-width,initial-scale=1" /> <title>Collector — GarboTrack</title>
+
+<link rel="stylesheet" href="css/garbotrack.css" /> <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.0/css/all.min.css" /> <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" /> <link rel="stylesheet" href="https://unpkg.com/leaflet-routing-machine@latest/dist/leaflet-routing-machine.css" /> </head>
+
+<body>
+
+<header class="topbar"> <i class="fa-solid fa-truck"></i> Collector <button class="btn ghost" onclick="GARBO.logout()" style="margin-left:auto;">Logout</button> </header>
+
+<main class="dashboard">
+
+<section class="card"> <h3>Create Schedule</h3> <form id="createForm" class="form-grid"> <label>Date <input type="date" id="sched_date" required></label> <label>Time <input type="time" id="sched_time" required></label> <label>Barangay <input id="sched_barangay" required></label> <button class="btn primary" type="submit">Add</button> </form> </section>
+
+<section class="card"> <h3>Active Schedules</h3> <ul id="scheduleList" class="list"></ul> </section>
+
+<section class="card"> <h3>Accepted Residents</h3> <ul id="acceptedList" class="list"></ul> </section>
+
+<section class="card" id="chatPanel" style="display:none;"> <h3>Chat with <span id="chatWithName">Resident</span></h3> <div id="chatBox" style="height:220px;overflow:auto;padding:8px;background:#f4fff8;border-radius:8px;"></div>
+
+<div style="display:flex;gap:8px;margin-top:8px;">
+  <input id="chatInput" placeholder="Message..." />
+  <button id="chatSend" class="btn primary">Send</button>
+</div>
+
+</section>
+
+<section class="card wide"> <h3>Live Map + Routing</h3> <div id="map"></div>
+
+<div style="display:flex;justify-content:space-between;margin-top:12px;">
+  <div>
+    <button id="start" class="btn primary">Start Sharing</button>
+    <button id="stop" class="btn muted">Stop</button>
+  </div>
+</div>
+
+</section>
+
+<div style="display:flex;gap:18px;margin:18px;"> <section class="card" style="flex:1;"> <h3>Cancelled Schedules</h3> <ul id="cancelList" class="list"></ul> </section>
+
+<section class="card" style="flex:1;">
+  <h3>Completed Collections</h3>
+  <ul id="completedList" class="list"></ul>
+</section>
+
+</div>
+
+</main>
+
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script> <script src="https://unpkg.com/leaflet-routing-machine@latest/dist/leaflet-routing-machine.js"></script> <script src="js/main.js"></script>
+
+<script> /* ========================================================== FIXED: WAIT FOR GARBO + SUPABASE BEFORE ANY CODE RUNS ========================================================== */ (function waitReady() { if (!window.GARBO || !window._GARBO_SUPABASE) { console.log("Waiting for GARBO..."); return setTimeout(waitReady, 80); }
+
+(async () => {
+
+await GARBO.init();
+
+/* AUTH */
+let profile = localStorage.getItem("garbo_profile");
+if (profile) profile = JSON.parse(profile);
+else profile = await GARBO.getCurrentProfile();
+
+if (!profile || profile.role !== "collector") {
+  alert("Not authorized");
+  return location.href = "index.html";
+}
+
+const barangay = profile.barangay;
+const collectorId = profile.id;
+
+/* MAP INIT */
+const map = L.map("map").setView([14.60, 120.98], 13);
+L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png").addTo(map);
+
+const truckIcon = L.icon({
+  iconUrl: "https://cdn-icons-png.flaticon.com/512/743/743007.png",
+  iconSize: [40, 40]
+});
+
+let marker = null;
+let watchId = null;
+window.currentCollectorPos = null;
+window.routingControl = null;
+
+
+/* ==========================================================
+   LIVE POSITION SHARING
+========================================================== */
+document.getElementById("start").onclick = () => {
+  if (!navigator.geolocation) return alert("Geolocation unsupported");
+
+  watchId = navigator.geolocation.watchPosition(async pos => {
+    const { latitude: lat, longitude: lng } = pos.coords;
+
+    window.currentCollectorPos = { lat, lng };
+
+    if (!marker) {
+      marker = L.marker([lat, lng], { icon: truckIcon }).addTo(map);
+    } else {
+      marker.setLatLng([lat, lng]);
+    }
+
+    map.setView([lat, lng], 15);
+
+    GARBO.upsertCollectorPos(collectorId, lat, lng).catch(console.error);
+
+  }, console.error, { enableHighAccuracy: true });
+
+  alert("Sharing started");
+};
+
+document.getElementById("stop").onclick = () => {
+  if (watchId) navigator.geolocation.clearWatch(watchId);
+  alert("Stopped");
+};
+
+
+/* ==========================================================
+   SCHEDULES
+========================================================== */
+async function loadSchedules() {
+  const res = await GARBO.getSchedulesByBarangay(barangay);
+  const list = document.getElementById("scheduleList");
+  list.innerHTML = "";
+
+  (res.data || []).forEach(s => {
+    if (s.status === "cancelled") return;
+
+    const li = document.createElement("li");
+    li.className = "list-item";
+    li.innerHTML = `
+      <div>
+        <strong>${s.date}</strong>
+        <div class="muted">${s.time}</div>
+      </div>
+    `;
+
+    const cancelBtn = document.createElement("button");
+    cancelBtn.className = "btn small muted";
+    cancelBtn.innerText = "Cancel";
+
+    cancelBtn.onclick = async () => {
+      const remarks = prompt("Why cancel?");
+      if (!remarks) return;
+
+      await GARBO.cancelSchedule(s.id, remarks, collectorId);
+      loadSchedules();
+      loadCancelled();
+    };
+
+    li.appendChild(cancelBtn);
+    list.appendChild(li);
+  });
+}
+loadSchedules();
+
+
+/* ==========================================================
+   CANCELLED
+========================================================== */
+async function loadCancelled() {
+  const sup = window._GARBO_SUPABASE;
+
+  const { data: scheds } = await sup
+    .from("schedules")
+    .select("*")
+    .eq("status", "cancelled")
+    .eq("barangay", barangay)
+    .order("created_at", { ascending: false });
+
+  const list = document.getElementById("cancelList");
+  list.innerHTML = "";
+
+  for (const s of scheds || []) {
+    const remark = await sup
+      .from("reports")
+      .select("*")
+      .eq("schedule_id", s.id)
+      .eq("type", "schedule_cancel")
+      .order("created_at", { ascending: false })
+      .limit(1)
+      .single();
+
+    const txt =
+      remark.data?.message
+        ? remark.data.message
+        : "(no remarks provided)";
+
+    const li = document.createElement("li");
+    li.className = "list-item";
+    li.innerHTML = `
+      <div>
+        <strong>${s.date} ${s.time}</strong>
+        <div class="muted">${txt}</div>
+      </div>
+    `;
+    list.appendChild(li);
+  }
+}
+loadCancelled();
+
+
+/* ==========================================================
+   COMPLETED COLLECTIONS
+========================================================== */
+async function loadCompleted() {
+  const sup = window._GARBO_SUPABASE;
+  const { data } = await sup
+    .from("completed_collections")
+    .select("*")
+    .order("created_at", { ascending: false });
+
+  const list = document.getElementById("completedList");
+  list.innerHTML = "";
+
+  (data || []).forEach(c => {
+    const li = document.createElement("li");
+    li.className = "list-item";
+    li.innerHTML = `
+      <div>
+        <strong>${c.resident_name}</strong>
+        <div class="muted">${c.barangay} • ${c.date_completed} ${c.time_completed}</div>
+      </div>`;
+    list.appendChild(li);
+  });
+}
+loadCompleted();
+
+
+/* ==========================================================
+   ACCEPTED RESIDENTS
+========================================================== */
+async function loadAccepted() {
+  const sup = window._GARBO_SUPABASE;
+  const { data } = await sup
+    .from("accepted")
+    .select("*")
+    .eq("barangay", barangay)
+    .order("accepted_at", { ascending: false });
+
+  const list = document.getElementById("acceptedList");
+  list.innerHTML = "";
+
+  for (const a of data || []) {
+    const p = await sup.from("profiles").select("*").eq("id", a.resident_id).single();
+
+    const li = document.createElement("li");
+    li.className = "list-item";
+    li.innerHTML = `
+      <div>
+        <strong>${p.data.full_name}</strong>
+        <div class="muted">Schedule #${a.schedule_id}</div>
+      </div>
+    `;
+
+    const routeBtn = document.createElement("button");
+    routeBtn.className = "btn small primary";
+    routeBtn.innerText = "Route";
+    routeBtn.onclick = () => routeToResident(a.resident_id, p.data.full_name);
+
+    const chatBtn = document.createElement("button");
+    chatBtn.className = "btn small ghost";
+    chatBtn.style.marginLeft = "8px";
+    chatBtn.innerText = "Chat";
+    chatBtn.onclick = () => openChatWith(a.resident_id, p.data.full_name);
+
+    const doneBtn = document.createElement("button");
+    doneBtn.className = "btn small";
+    doneBtn.style.marginLeft = "8px";
+    doneBtn.innerText = "Completed";
+    doneBtn.onclick = async () => {
+      await GARBO.markCompleted({
+        collector_id: collectorId,
+        resident_id: a.resident_id,
+        resident_name: p.data.full_name,
+        barangay,
+        schedule_id: a.schedule_id
+      });
+      loadCompleted();
+      alert("Marked completed");
+    };
+
+    li.appendChild(routeBtn);
+    li.appendChild(chatBtn);
+    li.appendChild(doneBtn);
+
+    list.appendChild(li);
+  }
+}
+loadAccepted();
+
+
+/* ==========================================================
+   CHAT (PER RESIDENT)
+========================================================== */
+let activeResident = null;
+let chatChannel = null;
+
+const chatPanel = document.getElementById("chatPanel");
+const chatBox = document.getElementById("chatBox");
+
+function addChat(msg, me = false, name = null) {
+  const div = document.createElement("div");
+  div.style.padding = "6px";
+  div.style.marginBottom = "6px";
+  div.style.borderRadius = "6px";
+  div.style.background = me ? "#e6fff0" : "#fff";
+  div.innerText = `${name || msg.sender_id}: ${msg.message}`;
+  chatBox.appendChild(div);
+  chatBox.scrollTop = chatBox.scrollHeight;
+}
+
+async function openChatWith(resId, resName) {
+  activeResident = resId;
+  chatPanel.style.display = "block";
+  document.getElementById("chatWithName").innerText = resName;
+
+  chatBox.innerHTML = "";
+
+  const sup = window._GARBO_SUPABASE;
+
+  const { data } = await sup
+    .from("messages")
+    .select("*")
+    .or(
+      `and(sender_id.eq.${collectorId},receiver_id.eq.${resId}),
+       and(sender_id.eq.${resId},receiver_id.eq.${collectorId})`
+    )
+    .order("timestamp", { ascending: true });
+
+  (data || []).forEach(m => addChat(m, m.sender_id === collectorId, resName));
+
+  if (chatChannel) chatChannel.unsubscribe();
+
+  chatChannel = sup.channel("chat_" + collectorId + "_" + resId)
+    .on("postgres_changes", { event: "INSERT", schema: "public", table: "messages" },
+      (payload) => {
+        const m = payload.new;
+        const relevant =
+          (m.sender_id === collectorId && m.receiver_id === resId) ||
+          (m.sender_id === resId && m.receiver_id === collectorId);
+        if (relevant) addChat(m, m.sender_id === collectorId, resName);
+      })
+    .subscribe();
+}
+
+document.getElementById("chatSend").onclick = async () => {
+  const text = document.getElementById("chatInput").value.trim();
+  if (!text || !activeResident) return;
+
+  await GARBO.sendMessage(collectorId, activeResident, text);
+  addChat({ sender_id: collectorId, message: text }, true, "You");
+  document.getElementById("chatInput").value = "";
+};
+
+
+/* ==========================================================
+   ROUTING
+========================================================== */
+async function routeToResident(resId, name) {
+  const sup = window._GARBO_SUPABASE;
+  const pos = await GARBO.getResidentPos(resId);
+  if (!pos.data) return alert("Resident location not available");
+
+  const { lat: rLat, lng: rLng } = pos.data;
+
+  let cLat, cLng;
+
+  if (window.currentCollectorPos) {
+    cLat = currentCollectorPos.lat;
+    cLng = currentCollectorPos.lng;
+  } else if (marker) {
+    const m = marker.getLatLng();
+    cLat = m.lat;
+    cLng = m.lng;
+  } else {
+    return alert("Collector location not ready");
+  }
+
+  if (window.routingControl) map.removeControl(window.routingControl);
+
+  window.routingControl = L.Routing.control({
+    waypoints: [
+      L.latLng(cLat, cLng),
+      L.latLng(rLat, rLng)
+    ],
+    lineOptions: { styles: [{ color: "#2e8b57", weight: 5 }] }
+  }).addTo(map);
+
+  map.fitBounds(L.latLngBounds([[cLat, cLng], [rLat, rLng]]), { padding: [50, 50] });
+}
+
+/* ==========================================================
+   REALTIME REFRESH
+========================================================== */
+const sup = window._GARBO_SUPABASE;
+
+sup.channel("accepted_updates")
+  .on("postgres_changes", { event: "*", table: "accepted", schema: "public" },
+    () => loadAccepted())
+  .subscribe();
+
+sup.channel("schedule_updates")
+  .on("postgres_changes", { event: "*", table: "schedules", schema: "public" },
+    () => { loadSchedules(); loadCancelled(); })
+  .subscribe();
+
+sup.channel("completed_updates")
+  .on("postgres_changes", { event: "*", table: "completed_collections", schema: "public" },
+    () => loadCompleted())
+  .subscribe();
+
+})();
+
+})(); </script>
+
+</body> </html>
